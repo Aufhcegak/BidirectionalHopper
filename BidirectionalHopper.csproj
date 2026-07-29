@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- SMAPI 4.x 基于 .NET 6 运行时 -->
+    <TargetFramework>net6.0</TargetFramework>
+    <AssemblyName>BidirectionalHopper</AssemblyName>
+    <RootNamespace>BidirectionalHopper</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- 源码直接放在游戏 Mods 目录下，禁用 ModBuildConfig 的“部署到 Mods”步骤，
+         避免把 manifest.json 复制到自身导致文件占用冲突。编译产物由下面的 AfterBuild 目标复制。 -->
+    <EnableModDeploy>false</EnableModDeploy>
+    <EnableModZip>false</EnableModZip>
+  </PropertyGroup>
+
+  <!-- 编译完成后把运行所需文件复制到项目目录本身（即游戏 Mods\BidirectionalHopper）。 -->
+  <Target Name="DeployModFiles" AfterTargets="Build">
+    <ItemGroup>
+      <ModDeployFiles Include="$(TargetPath)" />
+      <ModDeployFiles Include="$(TargetDir)$(TargetName).pdb" Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
+      <ModDeployFiles Include="$(ProjectDir)manifest.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ModDeployFiles)" DestinationFolder="$(ProjectDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <ItemGroup>
+    <!-- Pathoschild.Stardew.ModBuildConfig：
+         自动引用 Stardew Valley / SMAPI / xTile，
+         编译后将程序集与 manifest.json 等自动部署到游戏 Mods 目录（默认 <GamePath>\Mods\<AssemblyName>）。 -->
+    <PackageReference Include="Pathoschild.Stardew.ModBuildConfig" Version="4.4.0" />
+    <!-- Harmony 补丁库（与 SMAPI 4.5 内置的 0Harmony.dll 2.2.2 对齐；运行时由 SMAPI 提供，不随 Mod 分发） -->
+    <PackageReference Include="Lib.Harmony" Version="2.2.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Update="0Harmony">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

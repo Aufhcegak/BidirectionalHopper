@@ -1,0 +1,8 @@
+{
+  "EnableFeeding": true,
+  "EnableCollecting": true,
+  "IncludePlainChestsAboveHoppers": false,
+  "FeedDownIntervalMinutes": 0,
+  "PlaySounds": true,
+  "VerboseLogging": true
+}
