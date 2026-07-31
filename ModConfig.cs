@@ -15,8 +15,8 @@ namespace BidirectionalHopper
         /// <summary>加料方向为下时，尝试送入下方漏斗/箱子的间隔（分钟）。加料方向为上时始终按原版频率（每 60 分钟）执行。</summary>
         public int FeedDownIntervalMinutes { get; set; } = 10;
 
-        /// <summary>是否在收取时播放音效。</summary>
-        public bool PlaySounds { get; set; } = true;
+        /// <summary>收/投的轮询间隔（游戏 tick，60≈1秒）。照《Automate》默认 60：既即时又不卡。</summary>
+        public int AutomationInterval { get; set; } = 60;
 
         /// <summary>调试：把每次转移写入 SMAPI 控制台。</summary>
         public bool VerboseLogging { get; set; } = false;

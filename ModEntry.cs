@@ -27,6 +27,8 @@ namespace BidirectionalHopper
             helper.Events.World.ObjectListChanged += OnObjectListChanged;
             // 返回标题时清缓存
             helper.Events.GameLoop.ReturnedToTitle += OnReturnedToTitle;
+            // 节流轮询漏斗（主线程，照《Automate》做法）
+            helper.Events.GameLoop.UpdateTicked += OnUpdateTicked;
             // GMCM（可选）
             helper.Events.GameLoop.GameLaunched += OnGameLaunched;
 
@@ -39,6 +41,14 @@ namespace BidirectionalHopper
         private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
         {
             HopperPatch.RebuildCache();
+        }
+
+        /// <summary>主线程节流轮询：每 AutomationInterval tick 处理一次当前地图的漏斗收/投。</summary>
+        private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
+        {
+            if (!e.IsMultipleOf((uint)this.Config.AutomationInterval))
+                return;
+            HopperPatch.ProcessAllHoppers();
         }
 
         private void OnObjectListChanged(object? sender, ObjectListChangedEventArgs e)
@@ -83,14 +93,6 @@ namespace BidirectionalHopper
                 setValue: v => this.Config.EnableCollecting = v,
                 name: () => "启用收取",
                 tooltip: () => "机器加工完成的瞬间，自动把产物收进漏斗。"
-            );
-
-            gmcm.AddBoolOption(
-                mod: this.ModManifest,
-                getValue: () => this.Config.PlaySounds,
-                setValue: v => this.Config.PlaySounds = v,
-                name: () => "播放音效",
-                tooltip: () => "收取/加料时播放音效。"
             );
 
             gmcm.AddBoolOption(
