@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.IO;
 using HarmonyLib;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
@@ -17,6 +18,9 @@ namespace BidirectionalHopper
             Instance = this;
             this.Config = helper.ReadConfig<ModConfig>();
 
+            // 性能采样器（诊断期）：输出文件在 Mods/BidirectionalHopper/perfmon-*.csv
+            PerfMonitor.Init(this.Helper.DirectoryPath);
+
             // 安装 Harmony 补丁
             var harmony = new Harmony(this.ModManifest.UniqueID);
             HopperPatch.Apply(harmony);
@@ -29,6 +33,8 @@ namespace BidirectionalHopper
             helper.Events.GameLoop.ReturnedToTitle += OnReturnedToTitle;
             // 节流轮询漏斗（主线程，照《Automate》做法）
             helper.Events.GameLoop.UpdateTicked += OnUpdateTicked;
+            // 每天结束时落盘采样数据
+            helper.Events.GameLoop.DayEnding += OnDayEnding;
             // GMCM（可选）
             helper.Events.GameLoop.GameLaunched += OnGameLaunched;
 
@@ -43,12 +49,19 @@ namespace BidirectionalHopper
             HopperPatch.RebuildCache();
         }
 
-        /// <summary>主线程节流轮询：每 AutomationInterval tick 处理一次当前地图的漏斗收/投。</summary>
+        /// <summary>每帧喂给采样器，由它判断是否需要检查长帧。</summary>
         private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
         {
+            PerfMonitor.OnTick();
             if (!e.IsMultipleOf((uint)this.Config.AutomationInterval))
                 return;
             HopperPatch.ProcessAllHoppers();
+        }
+
+        /// <summary>每天结束（睡觉结算）时把采样数据落盘。</summary>
+        private void OnDayEnding(object? sender, DayEndingEventArgs e)
+        {
+            PerfMonitor.FlushDay();
         }
 
         private void OnObjectListChanged(object? sender, ObjectListChangedEventArgs e)

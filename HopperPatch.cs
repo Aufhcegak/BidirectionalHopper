@@ -80,35 +80,43 @@ namespace BidirectionalHopper
             if (location == null || !HopperCache.TryGetValue(location, out HashSet<Vector2>? hoppers) || hoppers.Count == 0)
                 return;
 
-            var list = new List<Vector2>(hoppers);
-            if (Cursor >= list.Count)
-                Cursor = 0;
-
-            int processed = 0;
-            for (int n = 0; n < list.Count && processed < BatchSize; n++)
+            PerfMonitor.Start("ProcessAllHoppers");
+            try
             {
-                Vector2 hopperTile = list[(Cursor + n) % list.Count];
+                var list = new List<Vector2>(hoppers);
+                if (Cursor >= list.Count)
+                    Cursor = 0;
 
-                if (!location.objects.TryGetValue(hopperTile, out Object hopperObj) || hopperObj is not Chest hopper)
-                { processed++; continue; }
-
-                // 照 Automate：每个漏斗只查一次锁；箱子被锁（玩家正开着它）就整个跳过这一组。
-                if (hopper.GetMutex().IsLocked())
-                { processed++; continue; }
-
-                Vector2 downTile = new(hopperTile.X, hopperTile.Y + 1f);
-                if (location.objects.TryGetValue(downTile, out Object machine) && machine.GetMachineData() != null)
+                int processed = 0;
+                for (int n = 0; n < list.Count && processed < BatchSize; n++)
                 {
-                    bool ready = machine.readyForHarvest.Value && machine.heldObject.Value != null && machine.MinutesUntilReady == 0;
-                    if (ready && config.EnableCollecting)
-                        CollectThenRefill(location, machine, hopper, config, "tick/down");
-                    else if (!ready && config.EnableFeeding)
-                        TryFeedMachine(location, hopper, machine, "tick/down");
-                }
-                processed++;
-            }
+                    Vector2 hopperTile = list[(Cursor + n) % list.Count];
 
-            Cursor = (Cursor + processed) % list.Count;
+                    if (!location.objects.TryGetValue(hopperTile, out Object hopperObj) || hopperObj is not Chest hopper)
+                    { processed++; continue; }
+
+                    // 照 Automate：每个漏斗只查一次锁；箱子被锁（玩家正开着它）就整个跳过这一组。
+                    if (hopper.GetMutex().IsLocked())
+                    { processed++; continue; }
+
+                    Vector2 downTile = new(hopperTile.X, hopperTile.Y + 1f);
+                    if (location.objects.TryGetValue(downTile, out Object machine) && machine.GetMachineData() != null)
+                    {
+                        bool ready = machine.readyForHarvest.Value && machine.heldObject.Value != null && machine.MinutesUntilReady == 0;
+                        if (ready && config.EnableCollecting)
+                            CollectThenRefill(location, machine, hopper, config, "tick/down");
+                        else if (!ready && config.EnableFeeding)
+                            TryFeedMachine(location, hopper, machine, "tick/down");
+                    }
+                    processed++;
+                }
+
+                Cursor = (Cursor + processed) % list.Count;
+            }
+            finally
+            {
+                PerfMonitor.End();
+            }
         }
 
         /*********
@@ -173,9 +181,17 @@ namespace BidirectionalHopper
             if (!ModEntry.Instance.Config.EnableCollecting)
                 return;
 
-            GameLocation? location = __instance.Location;
-            if (location != null)
-                TryCollectFromAdjacentMachine(location, __instance, "checkForAction");
+            PerfMonitor.Start("AfterCheckForAction");
+            try
+            {
+                GameLocation? location = __instance.Location;
+                if (location != null)
+                    TryCollectFromAdjacentMachine(location, __instance, "checkForAction");
+            }
+            finally
+            {
+                PerfMonitor.End();
+            }
         }
 
         /// <summary>每天早上兜底一次。</summary>
@@ -190,22 +206,30 @@ namespace BidirectionalHopper
             if (!HopperCache.TryGetValue(__instance, out HashSet<Vector2>? hoppers))
                 return;
 
-            foreach (Vector2 hopperTile in hoppers)
+            PerfMonitor.Start("AfterDayUpdate");
+            try
             {
-                if (!__instance.objects.TryGetValue(hopperTile, out Object hopperObj) || hopperObj is not Chest hopper)
-                    continue;
-                if (hopper.GetMutex().IsLocked())
-                    continue;
-
-                Vector2 downTile = new(hopperTile.X, hopperTile.Y + 1f);
-                if (__instance.objects.TryGetValue(downTile, out Object machine) && machine.GetMachineData() != null)
+                foreach (Vector2 hopperTile in hoppers)
                 {
-                    bool ready = machine.readyForHarvest.Value && machine.heldObject.Value != null && machine.MinutesUntilReady == 0;
-                    if (ready && config.EnableCollecting)
-                        CollectThenRefill(__instance, machine, hopper, config, "dayStart/down");
-                    else if (!ready && config.EnableFeeding)
-                        TryFeedMachine(__instance, hopper, machine, "dayStart/down");
+                    if (!__instance.objects.TryGetValue(hopperTile, out Object hopperObj) || hopperObj is not Chest hopper)
+                        continue;
+                    if (hopper.GetMutex().IsLocked())
+                        continue;
+
+                    Vector2 downTile = new(hopperTile.X, hopperTile.Y + 1f);
+                    if (__instance.objects.TryGetValue(downTile, out Object machine) && machine.GetMachineData() != null)
+                    {
+                        bool ready = machine.readyForHarvest.Value && machine.heldObject.Value != null && machine.MinutesUntilReady == 0;
+                        if (ready && config.EnableCollecting)
+                            CollectThenRefill(__instance, machine, hopper, config, "dayStart/down");
+                        else if (!ready && config.EnableFeeding)
+                            TryFeedMachine(__instance, hopper, machine, "dayStart/down");
+                    }
                 }
+            }
+            finally
+            {
+                PerfMonitor.End();
             }
         }
 
@@ -229,6 +253,19 @@ namespace BidirectionalHopper
         /// <b>不</b>走 OutputMachine→minutesElapsed(0) 的工作动画/光源 —— 这是消掉卡顿的关键。
         /// 蜂房类"收取后自动重启"机器仍按 OutputCollected 规则续产（行为正确性，Automate 同样保留）。</summary>
         private static bool CollectThenRefill(GameLocation location, Object machine, Chest hopper, ModConfig config, string reason)
+        {
+            PerfMonitor.Start("CollectThenRefill");
+            try
+            {
+                return CollectThenRefillCore(location, machine, hopper, config, reason);
+            }
+            finally
+            {
+                PerfMonitor.End();
+            }
+        }
+
+        private static bool CollectThenRefillCore(GameLocation location, Object machine, Chest hopper, ModConfig config, string reason)
         {
             Object held = machine.heldObject.Value;
             if (held == null || !machine.readyForHarvest.Value || machine.MinutesUntilReady != 0)
@@ -287,15 +324,23 @@ namespace BidirectionalHopper
         /// 调用方保证本机是机器（已用 <c>GetMachineData() != null</c> 把关）。</summary>
         private static bool TryFeedMachine(GameLocation location, Chest hopper, Object machine, string reason)
         {
-            if (machine.heldObject.Value != null)
-                return false; // already loaded
-
-            if (machine.AttemptAutoLoad(hopper.GetItemsForPlayer(), Game1.MasterPlayer))
+            PerfMonitor.Start("TryFeedMachine");
+            try
             {
-                OnTransferred(location, machine.TileLocation, machine.lastInputItem.Value, hopper, $"feedMachine/{reason}");
-                return true;
+                if (machine.heldObject.Value != null)
+                    return false; // already loaded
+
+                if (machine.AttemptAutoLoad(hopper.GetItemsForPlayer(), Game1.MasterPlayer))
+                {
+                    OnTransferred(location, machine.TileLocation, machine.lastInputItem.Value, hopper, $"feedMachine/{reason}");
+                    return true;
+                }
+                return false;
             }
-            return false;
+            finally
+            {
+                PerfMonitor.End();
+            }
         }
 
         /*********
