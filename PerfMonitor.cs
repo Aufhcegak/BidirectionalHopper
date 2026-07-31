@@ -33,12 +33,6 @@ namespace BidirectionalHopper
         /// <summary>帧耗时检查间隔（tick）。</summary>
         private const int FrameCheckInterval = 300; // 5 秒
 
-        /// <summary>长帧前后各记录多少 tick 的窗口。</summary>
-        private const int LagWindow = 60;
-
-        /// <summary>日志滚动上限（条目）：超过后只保留最新，避免无限增长。</summary>
-        private const int MaxFrameEntries = 3000;
-
         /// <summary>单轮最长的帧样本数。</summary>
         private const int MaxFrameRing = 1024;
 
@@ -51,19 +45,12 @@ namespace BidirectionalHopper
         private static int FrameRingPos;
         private static int TickCount;
 
-        private static readonly List<FrameEntry> FrameLog = new();
         private static readonly Dictionary<string, double> Timings = new();
         private static readonly Dictionary<string, int> Counts = new();
         private static readonly Dictionary<string, double> Maxes = new();
         private static readonly List<(string Name, long ElapsedMs)> Stack = new();
         private static string OutputPath = "";
-
-        private sealed class FrameEntry
-        {
-            public int Tick;
-            public double Ms;
-            public string TimeOfDay = "";
-        }
+        private static StreamWriter? Writer;
 
         /*********
         ** 对外接口
@@ -133,22 +120,27 @@ namespace BidirectionalHopper
             if (!IsEnabled())
                 return;
 
-            // 帧窗口（每 5 秒检查一次，有新长帧就落盘一次窗口）。
-            FlushFrameWindow();
-
-            // 环节统计。
-            using var w = new StreamWriter(OutputPath, append: true);
-            foreach (var kv in Timings.OrderByDescending(p => p.Value))
+            try
             {
-                double total = kv.Value;
-                int calls = Counts.GetValueOrDefault(kv.Key);
-                double avg = calls > 0 ? total / calls : 0;
-                w.WriteLine($"timing,{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{kv.Key},{calls},{total:F2},{avg:F3},{Maxes.GetValueOrDefault(kv.Key):F2}");
+                // 帧窗口（每 5 秒检查一次，有新长帧就落盘一次窗口）。
+                FlushFrameWindow();
+
+                // 环节统计。
+                foreach (var kv in Timings.OrderByDescending(p => p.Value))
+                {
+                    int calls = Counts.GetValueOrDefault(kv.Key);
+                    double avg = calls > 0 ? kv.Value / calls : 0;
+                    FlushLine("timing",
+                        $"{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{kv.Key},{calls},{kv.Value:F2},{avg:F3},{Maxes.GetValueOrDefault(kv.Key):F2}");
+                }
+                Timings.Clear();
+                Counts.Clear();
+                Maxes.Clear();
             }
-            w.Flush();
-            Timings.Clear();
-            Counts.Clear();
-            Maxes.Clear();
+            catch (Exception ex)
+            {
+                ModEntry.Instance.Monitor.Log($"性能采样器写文件失败：{ex.Message}", StardewModdingAPI.LogLevel.Warn);
+            }
         }
 
         /*********
@@ -160,6 +152,15 @@ namespace BidirectionalHopper
             return OutputPath.Length > 0;
         }
 
+        /// <summary>共享写入：所有行经同一个持久句柄，写完立即 Flush（不 Close）避免文件被占用。</summary>
+        private static void FlushLine(string kind, string fields)
+        {
+            if (Writer == null)
+                return;
+            Writer.WriteLine($"{kind},{fields}");
+            Writer.Flush();
+        }
+
         /// <summary>初始化输出文件并写入 CSV 表头。</summary>
         internal static void Init(string dir)
         {
@@ -167,7 +168,10 @@ namespace BidirectionalHopper
             {
                 string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
                 OutputPath = Path.Combine(dir, $"perfmon-{stamp}.csv");
-                File.WriteAllText(OutputPath, "kind,player,date,name,calls,total_ms,avg_ms,max_ms\n");
+                // 同一个 StreamWriter 实例全程持有，append 模式只开一次，避免句柄叠加冲突。
+                Writer = new StreamWriter(OutputPath, append: false);
+                Writer.WriteLine("kind,player,date,name,calls,total_ms,avg_ms,max_ms");
+                Writer.Flush();
             }
             catch (Exception ex)
             {
@@ -189,14 +193,13 @@ namespace BidirectionalHopper
                 if (n == 0)
                     n = MaxFrameRing;
                 int start = FrameRingPos + MaxFrameRing - n;
-                using var w = new StreamWriter(OutputPath, append: true);
                 for (int i = 0; i < n; i++)
                 {
                     int idx = (start + i) % MaxFrameRing;
                     if (FrameRing[idx] > 0)
-                        w.WriteLine($"frame,{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{TickCount - n + i},{FrameRing[idx]:F1}");
+                        FlushLine("frame",
+                            $"{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{TickCount - n + i},{FrameRing[idx]:F1}");
                 }
-                w.Flush();
 
                 // 再落盘长帧窗口（长帧 tick 前后各 60 tick）。
                 for (int i = 0; i < n; i++)
@@ -205,11 +208,8 @@ namespace BidirectionalHopper
                     if (FrameRing[idx] > LagThresholdMs)
                     {
                         int lagTick = TickCount - n + i;
-                        int lo = Math.Max(0, lagTick - LagWindow);
-                        int hi = Math.Min(TickCount, lagTick + LagWindow);
-                        using var w2 = new StreamWriter(OutputPath, append: true);
-                        w2.WriteLine($"lag,{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{lagTick},{FrameRing[idx]:F1}");
-                        w2.Flush();
+                        FlushLine("lag",
+                            $"{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{lagTick},{FrameRing[idx]:F1}");
                         // 清空环形缓冲，避免同一段数据反复落盘。
                         Array.Clear(FrameRing, 0, MaxFrameRing);
                         FrameRingPos = 0;
