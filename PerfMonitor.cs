@@ -30,9 +30,6 @@ namespace BidirectionalHopper
         /// <summary>检测长帧的阈值（毫秒）：超过即视为一次卡顿。</summary>
         private const double LagThresholdMs = 50;
 
-        /// <summary>帧耗时检查间隔（tick）。</summary>
-        private const int FrameCheckInterval = 300; // 5 秒
-
         /// <summary>单轮最长的帧样本数。</summary>
         private const int MaxFrameRing = 1024;
 
@@ -56,9 +53,14 @@ namespace BidirectionalHopper
         ** 对外接口
         *********/
 
+        /// <summary>最近长帧的 tick 号与帧耗时（运行中只累积，落盘由 FlushDay 统一做）。</summary>
+        private static readonly List<(int Tick, double Ms)> PendingLag = new();
+
         /// <summary>由 ModEntry 在 UpdateTicked 每帧调用。</summary>
         internal static void OnTick()
         {
+            TickCount++;
+
             if (Sw.IsRunning)
                 Sw.Stop();
             double ms = Sw.Elapsed.TotalMilliseconds;
@@ -68,21 +70,9 @@ namespace BidirectionalHopper
             FrameRing[FrameRingPos] = (float)Math.Min(ms, 500.0);
             FrameRingPos = (FrameRingPos + 1) % MaxFrameRing;
 
-            if (++TickCount % FrameCheckInterval != 0)
-                return;
-
-            // 每 5 秒检查一次窗口内是否有长帧。
-            int n = Math.Min(MaxFrameRing, FrameRingPos);
-            if (n == 0)
-                n = MaxFrameRing;
-            for (int i = 0; i < n; i++)
-            {
-                if (FrameRing[(FrameRingPos + MaxFrameRing - 1 - i) % MaxFrameRing] > LagThresholdMs)
-                {
-                    FlushFrameWindow();
-                    break;
-                }
-            }
+            // 运行中不做任何文件写：只在内存里累积长帧，白天结束时统一落盘。
+            if (ms > LagThresholdMs)
+                PendingLag.Add((TickCount, ms));
         }
 
         /// <summary>环节开始（可嵌套；同一调用内的嵌套环节在结束时按耗时比例分摊）。</summary>
@@ -114,7 +104,7 @@ namespace BidirectionalHopper
             Counts[name] = c + 1;
         }
 
-        /// <summary>游戏会话结束（每天结束时调用）：把当前统计追加到 CSV。</summary>
+        /// <summary>游戏会话结束（每天结束时调用）：把运行期累积的统计与长帧数据统一落盘。</summary>
         internal static void FlushDay()
         {
             if (!IsEnabled())
@@ -122,8 +112,23 @@ namespace BidirectionalHopper
 
             try
             {
-                // 帧窗口（每 5 秒检查一次，有新长帧就落盘一次窗口）。
-                FlushFrameWindow();
+                // 长帧列表（运行期只在内存累积，这里才写文件，避免热路径写冲突卡死）。
+                foreach ((int tick, double ms) in PendingLag)
+                    FlushLine("lag", $"{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{tick},{ms:F1}");
+                PendingLag.Clear();
+
+                // 实时帧耗时窗口（最近 MaxFrameRing 帧）。
+                int n = Math.Min(MaxFrameRing, FrameRingPos);
+                if (n == 0)
+                    n = MaxFrameRing;
+                int start = FrameRingPos + MaxFrameRing - n;
+                for (int i = 0; i < n; i++)
+                {
+                    int idx = (start + i) % MaxFrameRing;
+                    if (FrameRing[idx] > 0)
+                        FlushLine("frame",
+                            $"{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{TickCount - n + i},{FrameRing[idx]:F1}");
+                }
 
                 // 环节统计。
                 foreach (var kv in Timings.OrderByDescending(p => p.Value))
@@ -133,9 +138,12 @@ namespace BidirectionalHopper
                     FlushLine("timing",
                         $"{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{kv.Key},{calls},{kv.Value:F2},{avg:F3},{Maxes.GetValueOrDefault(kv.Key):F2}");
                 }
+
                 Timings.Clear();
                 Counts.Clear();
                 Maxes.Clear();
+                Array.Clear(FrameRing, 0, MaxFrameRing);
+                FrameRingPos = 0;
             }
             catch (Exception ex)
             {
@@ -177,49 +185,6 @@ namespace BidirectionalHopper
             {
                 OutputPath = "";
                 ModEntry.Instance.Monitor.Log($"性能采样器初始化失败（不记录）：{ex.Message}", StardewModdingAPI.LogLevel.Warn);
-            }
-        }
-
-        /// <summary>把当前环形缓冲的帧耗时与近期长帧窗口落盘。</summary>
-        private static void FlushFrameWindow()
-        {
-            if (!IsEnabled())
-                return;
-
-            try
-            {
-                // 先落盘最近 60 tick 的完整帧耗时。
-                int n = Math.Min(MaxFrameRing, FrameRingPos);
-                if (n == 0)
-                    n = MaxFrameRing;
-                int start = FrameRingPos + MaxFrameRing - n;
-                for (int i = 0; i < n; i++)
-                {
-                    int idx = (start + i) % MaxFrameRing;
-                    if (FrameRing[idx] > 0)
-                        FlushLine("frame",
-                            $"{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{TickCount - n + i},{FrameRing[idx]:F1}");
-                }
-
-                // 再落盘长帧窗口（长帧 tick 前后各 60 tick）。
-                for (int i = 0; i < n; i++)
-                {
-                    int idx = (start + i) % MaxFrameRing;
-                    if (FrameRing[idx] > LagThresholdMs)
-                    {
-                        int lagTick = TickCount - n + i;
-                        FlushLine("lag",
-                            $"{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{lagTick},{FrameRing[idx]:F1}");
-                        // 清空环形缓冲，避免同一段数据反复落盘。
-                        Array.Clear(FrameRing, 0, MaxFrameRing);
-                        FrameRingPos = 0;
-                        break;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                ModEntry.Instance.Monitor.Log($"性能采样器写文件失败：{ex.Message}", StardewModdingAPI.LogLevel.Warn);
             }
         }
     }
