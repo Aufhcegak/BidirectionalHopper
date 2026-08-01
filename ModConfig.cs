@@ -16,7 +16,7 @@ namespace BidirectionalHopper
         public int FeedDownIntervalMinutes { get; set; } = 10;
 
         /// <summary>收/投的轮询间隔（游戏 tick，60≈1秒）。照《Automate》默认 60：既即时又不卡。</summary>
-        public int AutomationInterval { get; set; } = 60;
+        public int AutomationInterval { get; set; } = 10;
 
         /// <summary>调试：把每次转移写入 SMAPI 控制台。</summary>
         public bool VerboseLogging { get; set; } = false;

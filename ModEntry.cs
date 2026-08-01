@@ -57,8 +57,8 @@ namespace BidirectionalHopper
         private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
         {
             PerfMonitor.OnTick();
-            // 冻结期标记的机器：主线程立即收（同一 tick，功能优先）
-            HopperPatch.ProcessPendingMachines();
+            // 高频轮询（默认 10 tick≈0.17s）：机器完成 ~0.17s 内收走，满足"立马收"。
+            // 每帧只处理 4 台，重活分摊到多帧，不叠加尖峰。
             if (!e.IsMultipleOf((uint)this.Config.AutomationInterval))
                 return;
             HopperPatch.ProcessAllHoppers();

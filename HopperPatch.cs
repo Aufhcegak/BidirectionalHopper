@@ -34,22 +34,15 @@ namespace BidirectionalHopper
         /// <summary>缓存：地点 → 该地点中作为漏斗使用的箱子位置集合。</summary>
         private static readonly Dictionary<GameLocation, HashSet<Vector2>> HopperCache = new();
 
-        /// <summary>倒计时归零待处理的机器（冻结期标记，主线程立即收）。</summary>
-        private static readonly List<(GameLocation Location, Object Machine)> PendingMachines = new();
-
         /// <summary>当前客户端是否是修改世界状态的权威（主机或单人游戏）。</summary>
         private static bool IsAuthority => Context.IsMainPlayer;
 
-        /// <summary>安装全部补丁。只挂低频事件（玩家交互 / 每天早晨兜底），不挂热路径。</summary>
+        /// <summary>安装全部补丁。只挂低频事件（玩家交互 / 每天早晨兜底），不挂热路径。
+        /// <b>不 patch minutesElapsed</b>：那是 passTimeForObjects 冻结期热路径，
+        /// 照 Automate 的教训——任何在冻结期触发的工作都会排队到 Unlock 集中爆发卡顿。
+        /// 收/投完全靠高频轮询（10 tick≈0.17s）+ 状态机判断，既即时又不卡。</summary>
         internal static void Apply(Harmony harmony)
         {
-            // 机器倒计时归零（passTimeForObjects 冻结期内）：只标记待处理，主线程 UpdateTicked 立即收。
-            // 冻结期内不写对象表（排队到 Unlock 集中爆发 = 卡顿），标记是纯内存操作，安全。
-            harmony.Patch(
-                original: AccessTools.Method(typeof(Object), nameof(Object.minutesElapsed), new[] { typeof(int) }),
-                postfix: new HarmonyMethod(typeof(HopperPatch), nameof(AfterMinutesElapsed))
-            );
-
             // 玩家与机器交互后：顺手收一次产物（即时反馈，触发频率低，不在冻结期）。
             // 传参签名与原版 checkForAction(Farmer who, bool justCheckingForActivity) 一致，
             // postfix 里用 justCheckingForActivity 拦掉每帧的光标可交互性探测。
@@ -75,11 +68,9 @@ namespace BidirectionalHopper
         /// <summary>每轮最多处理的漏斗数（把开销封顶在常数，多台分摊到多帧，不叠加成尖峰）。</summary>
         private const int BatchSize = 4;
 
-        /// <summary>上一次看到的游戏时间（用于检测 10 分钟切换帧）。</summary>
-        private static int LastTimeOfDay = -1;
-
         /// <summary>主线程节流轮询：把当前地图缓存的漏斗统一收产物 + 投原料。
-        /// 照 Automate.MachineGroup.Automate：先查锁跳过整组，再分 Done(收) / Empty(喂) 处理。</summary>
+        /// 照 Automate.MachineGroup.Automate：先查锁跳过整组，再分 Done(收) / Empty(喂) 处理。
+        /// 不做时间切换帧跳过：每帧只处理 4 台，重活分摊到多帧，不会叠加成尖峰。</summary>
         internal static void ProcessAllHoppers()
         {
             if (!IsAuthority || !Context.IsWorldReady)
@@ -88,16 +79,6 @@ namespace BidirectionalHopper
             ModConfig config = ModEntry.Instance.Config;
             if (!config.EnableFeeding && !config.EnableCollecting)
                 return;
-
-            // 时间切换帧（每 10 分钟）：原版 passTimeForObjects 正在批量推进所有机器倒计时，
-            // 这帧本身就很重。跳过本轮，把漏斗收/投挪到下一帧，避免两件重活叠加成卡顿尖峰。
-            int timeOfDay = Game1.timeOfDay;
-            if (LastTimeOfDay != -1 && timeOfDay != LastTimeOfDay)
-            {
-                LastTimeOfDay = timeOfDay;
-                return;
-            }
-            LastTimeOfDay = timeOfDay;
 
             GameLocation? location = Game1.currentLocation;
             if (location == null || !HopperCache.TryGetValue(location, out HashSet<Vector2>? hoppers) || hoppers.Count == 0)
@@ -192,43 +173,6 @@ namespace BidirectionalHopper
         /*********
         ** 补丁方法（低频）
         *********/
-
-        /// <summary>机器倒计时归零（冻结期）：只标记待处理，主线程立即收。</summary>
-        private static void AfterMinutesElapsed(Object __instance, int minutes)
-        {
-            if (!IsAuthority || !Context.IsWorldReady)
-                return;
-
-            // 快速返回：非机器/是箱子/还没到完成状态。
-            if (__instance is Chest || __instance.GetMachineData() == null)
-                return;
-            if (!__instance.readyForHarvest.Value || __instance.heldObject.Value == null || __instance.MinutesUntilReady != 0)
-                return;
-
-            GameLocation? location = __instance.Location;
-            if (location == null)
-                return;
-            PendingMachines.Add((location, __instance));
-        }
-
-        /// <summary>主线程（冻结期外）：处理标记的机器，同一 tick 立即收。
-        /// 功能优先：每 tick 全量处理（同一 tick 同时完成的机器通常个位数）；
-        /// 极端的几十台同熟（如大批熔炉）也一帧收完，用户零延迟感知。</summary>
-        internal static void ProcessPendingMachines()
-        {
-            if (PendingMachines.Count == 0)
-                return;
-            if (!IsAuthority || !Context.IsWorldReady)
-                return;
-
-            foreach ((GameLocation location, Object machine) in PendingMachines)
-            {
-                if (machine.Location == null) // 机器可能已移除
-                    continue;
-                TryCollectFromAdjacentMachine(location, machine, "instant");
-            }
-            PendingMachines.Clear();
-        }
 
         /// <summary>玩家与机器交互后：尝试收一次产物（即时反馈）。
         /// <b>必须拦截 justCheckingForActivity=true 的调用</b>：原版每帧都调
