@@ -3,6 +3,6 @@
   "EnableCollecting": true,
   "IncludePlainChestsAboveHoppers": false,
   "FeedDownIntervalMinutes": 0,
-  "AutomationInterval": 10,
+  "AutomationInterval": 60,
   "VerboseLogging": true
 }

@@ -40,13 +40,14 @@ namespace BidirectionalHopper
         /// <summary>安装全部补丁。只挂低频事件（玩家交互 / 每天早晨兜底），不挂热路径。
         /// <b>不 patch minutesElapsed 做处理</b>：那是 passTimeForObjects 冻结期热路径，
         /// 照 Automate 的教训——任何在冻结期触发的工作都会排队到 Unlock 集中爆发卡顿。
-        /// 但挂一个<b>纯计数</b>的 prefix 用于诊断（统计切换帧调用次数，零干预零开销）。</summary>
+        /// 但挂一个<b>短路优化</b> prefix：对确定无意义的对象直接跳过函数体，
+        /// 把切换帧 2000+ 次遍历降到几十次（真正机器数），消除原版遍历开销。</summary>
         internal static void Apply(Harmony harmony)
         {
-            // 诊断探针：切换帧内 minutesElapsed 调用次数（纯计数，不改任何状态）。
+            // 短路优化 + 计数探针：切换帧遍历对象时，无意义的直接跳过（零状态改动）。
             harmony.Patch(
                 original: AccessTools.Method(typeof(Object), nameof(Object.minutesElapsed), new[] { typeof(int) }),
-                prefix: new HarmonyMethod(typeof(HopperPatch), nameof(CountMinutesElapsed))
+                prefix: new HarmonyMethod(typeof(HopperPatch), nameof(ShortCircuitMinutesElapsed))
             );
 
             // 玩家与机器交互后：顺手收一次产物（即时反馈，触发频率低，不在冻结期）。
@@ -64,10 +65,33 @@ namespace BidirectionalHopper
             );
         }
 
-        /// <summary>纯计数探针：切换帧内 minutesElapsed 被调用多少次（= 地图对象量）。</summary>
-        private static void CountMinutesElapsed(Object __instance, int minutes)
+        /// <summary>
+        /// <b>短路优化</b>：minutesElapsed 真正干活的只有"有 heldObject 的机器"和 4 个特例
+        /// BigCraftable（(BC)29 石像、(BC)96 外星胶囊、(BC)141 歌石、(BC)83 灯）。
+        /// 其余对象（栅栏/装饰/地板/洒水器/空机器）原版直接 return false——完全没必要进函数体。
+        /// 这里直接短路跳过，切换帧遍历从 2000+ 次降到几十次，消除原版遍历开销。
+        /// 返回语义安全：原版只有极少数情况返回 true（本函数永不返回 true），短路返回 false 等价。
+        /// </summary>
+        private static bool ShortCircuitMinutesElapsed(Object __instance, int minutes, ref bool __result)
         {
-            PerfMonitor.OnMinutesElapsedStart();
+            // 有 heldObject 的（机器工作中）：需要推进倒计时，走原版。
+            if (__instance.heldObject.Value != null)
+            {
+                PerfMonitor.OnMinutesElapsedStart();
+                return true;
+            }
+
+            // 特例 BigCraftable（原版 switch 里的 4 个）：走原版。
+            string qid = __instance.QualifiedItemId;
+            if (qid == "(BC)29" || qid == "(BC)96" || qid == "(BC)141" || qid == "(BC)83")
+            {
+                PerfMonitor.OnMinutesElapsedStart();
+                return true;
+            }
+
+            // 其余全部短路：等价于原版直接 return false。
+            __result = false;
+            return false;
         }
 
         /*********
