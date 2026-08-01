@@ -66,6 +66,30 @@ namespace BidirectionalHopper
         /// <summary>上一次看到的游戏时间（检测切换帧用）。</summary>
         private static int LastTimeOfDay = -1;
 
+        /// <summary>切换帧探针：记录该帧 minutesElapsed 调用次数与总耗时（统计调用次数和耗时分布）。</summary>
+        private static int SwitchFrameMinutesElapsedCalls;
+        private static double SwitchFrameMinutesElapsedMs;
+        private static readonly List<(int TimeOfDay, int Calls, double Ms)> SwitchFrameStats = new();
+
+        /// <summary>由 HopperPatch 的 minutesElapsed prefix 调用：切换帧内统计每次调用耗时。</summary>
+        internal static void OnMinutesElapsedStart()
+        {
+            SwitchFrameMinutesElapsedCalls++;
+        }
+
+        /// <summary>切换帧开始时由 OnTick 调用：重置计数器。</summary>
+        internal static void BeginSwitchFrame()
+        {
+            SwitchFrameMinutesElapsedCalls = 0;
+            SwitchFrameMinutesElapsedMs = 0;
+        }
+
+        /// <summary>切换帧结束时由 OnTick 调用：记录统计。</summary>
+        internal static void EndSwitchFrame(int timeOfDay)
+        {
+            SwitchFrameStats.Add((timeOfDay, SwitchFrameMinutesElapsedCalls, SwitchFrameMinutesElapsedMs));
+        }
+
         /// <summary>由 ModEntry 在 UpdateTicked 每帧调用。</summary>
         internal static void OnTick()
         {
@@ -84,7 +108,11 @@ namespace BidirectionalHopper
             // 是卡顿高发帧）。单独记录其耗时，落盘后直接看出切换帧还卡不卡。
             int timeOfDay = Game1.timeOfDay;
             if (LastTimeOfDay != -1 && timeOfDay != LastTimeOfDay)
+            {
+                EndSwitchFrame(LastTimeOfDay);
                 TimeSwitchFrames.Add((timeOfDay, ms));
+                BeginSwitchFrame();
+            }
             LastTimeOfDay = timeOfDay;
 
             // 运行中不做任何文件写：只在内存里累积长帧，白天结束时统一落盘。
@@ -137,6 +165,11 @@ namespace BidirectionalHopper
                 foreach ((int timeOfDay, double ms) in TimeSwitchFrames)
                     FlushLine("switch", $"{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{timeOfDay},{ms:F1}");
                 TimeSwitchFrames.Clear();
+
+                // 切换帧内部统计：minutesElapsed 调用次数（地图对象量）与耗时。
+                foreach ((int timeOfDay, int calls, double ms) in SwitchFrameStats)
+                    FlushLine("switchdetail", $"{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{timeOfDay},{calls},{ms:F1}");
+                SwitchFrameStats.Clear();
 
                 // 长帧列表（运行期只在内存累积，这里才写文件，避免热路径写冲突卡死）。
                 foreach ((int tick, double ms) in PendingLag)

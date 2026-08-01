@@ -38,11 +38,17 @@ namespace BidirectionalHopper
         private static bool IsAuthority => Context.IsMainPlayer;
 
         /// <summary>安装全部补丁。只挂低频事件（玩家交互 / 每天早晨兜底），不挂热路径。
-        /// <b>不 patch minutesElapsed</b>：那是 passTimeForObjects 冻结期热路径，
+        /// <b>不 patch minutesElapsed 做处理</b>：那是 passTimeForObjects 冻结期热路径，
         /// 照 Automate 的教训——任何在冻结期触发的工作都会排队到 Unlock 集中爆发卡顿。
-        /// 收/投完全靠高频轮询（10 tick≈0.17s）+ 状态机判断，既即时又不卡。</summary>
+        /// 但挂一个<b>纯计数</b>的 prefix 用于诊断（统计切换帧调用次数，零干预零开销）。</summary>
         internal static void Apply(Harmony harmony)
         {
+            // 诊断探针：切换帧内 minutesElapsed 调用次数（纯计数，不改任何状态）。
+            harmony.Patch(
+                original: AccessTools.Method(typeof(Object), nameof(Object.minutesElapsed), new[] { typeof(int) }),
+                prefix: new HarmonyMethod(typeof(HopperPatch), nameof(CountMinutesElapsed))
+            );
+
             // 玩家与机器交互后：顺手收一次产物（即时反馈，触发频率低，不在冻结期）。
             // 传参签名与原版 checkForAction(Farmer who, bool justCheckingForActivity) 一致，
             // postfix 里用 justCheckingForActivity 拦掉每帧的光标可交互性探测。
@@ -56,6 +62,12 @@ namespace BidirectionalHopper
                 original: AccessTools.Method(typeof(GameLocation), nameof(GameLocation.DayUpdate), new[] { typeof(int) }),
                 postfix: new HarmonyMethod(typeof(HopperPatch), nameof(AfterDayUpdate))
             );
+        }
+
+        /// <summary>纯计数探针：切换帧内 minutesElapsed 被调用多少次（= 地图对象量）。</summary>
+        private static void CountMinutesElapsed(Object __instance, int minutes)
+        {
+            PerfMonitor.OnMinutesElapsedStart();
         }
 
         /*********
