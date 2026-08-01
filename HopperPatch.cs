@@ -255,7 +255,12 @@ namespace BidirectionalHopper
         {
             Vector2 tile = machine.TileLocation;
             if (TryGetHopperAt(location, new Vector2(tile.X, tile.Y - 1f), out Chest? hopper))
+            {
+                // 漏斗被玩家打开时跳过（与轮询的锁检查一致，避免往锁定箱子写东西）。
+                if (hopper.GetMutex().IsLocked())
+                    return false;
                 return CollectThenRefill(location, machine, hopper, ModEntry.Instance.Config, $"{reason}/above");
+            }
             return false;
         }
 

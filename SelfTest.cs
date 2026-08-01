@@ -151,8 +151,8 @@ namespace BidirectionalHopper
         private static bool TestFeedEmptyMachine()
         {
             var scratch = new GameLocation("Maps\\Farm", "bh_t3");
-            var hopper = MakeHopper(scratch, new Vector2(5, 5), withItem: "(O)80"); // 石英
-            var machine = MakeMachine(scratch, new Vector2(5, 6), "(BC)10", ready: false);
+            var hopper = MakeHopper(scratch, new Vector2(5, 5), withItem: "(O)398"); // 葡萄，小桶接受
+            var machine = MakeMachine(scratch, new Vector2(5, 6), "(BC)10", ready: false); // 小桶
 
             bool fed = HopperPatch.TryFeedMachine(scratch, hopper, machine, "test");
             return fed && machine.heldObject.Value != null;
@@ -161,9 +161,9 @@ namespace BidirectionalHopper
         private static bool TestFeedAlreadyLoaded()
         {
             var scratch = new GameLocation("Maps\\Farm", "bh_t4");
-            var hopper = MakeHopper(scratch, new Vector2(5, 5), withItem: "(O)80");
+            var hopper = MakeHopper(scratch, new Vector2(5, 5), withItem: "(O)398");
             var machine = MakeMachine(scratch, new Vector2(5, 6), "(BC)10", ready: false);
-            machine.heldObject.Value = new Object("(O)80", 1); // 已有料
+            machine.heldObject.Value = new Object("(O)398", 1); // 已有料
 
             bool fed = HopperPatch.TryFeedMachine(scratch, hopper, machine, "test");
             return !fed; // 不应再投
@@ -184,14 +184,16 @@ namespace BidirectionalHopper
 
         private static bool TestHiveRestart()
         {
+            // 蜂房 (BC)10 是收集类机器，收取后无 OutputCollected 续产规则，
+            // 所以预期"收取后机器为空（不续产）"——验证收取复位正确。
             var scratch = new GameLocation("Maps\\Farm", "bh_t6");
             var hopper = MakeHopper(scratch, new Vector2(5, 5));
             var hive = MakeMachine(scratch, new Vector2(5, 6), "(BC)10", ready: true);
             hive.heldObject.Value = new Object("(O)340", 1); // 蜂蜜
 
             bool moved = HopperPatch.TryCollectFromAdjacentMachine(scratch, hive, "test");
-            // 收取后 OutputCollected 规则应续产（自动重启）
-            return moved && hive.heldObject.Value != null;
+            // 收取成功 + 机器复位（无续产规则时不自动重启）
+            return moved && hive.heldObject.Value == null && !hive.readyForHarvest.Value;
         }
 
         private static bool TestLockedHopperSkipped()
@@ -221,11 +223,11 @@ namespace BidirectionalHopper
         private static bool TestCollectThenRefill()
         {
             var scratch = new GameLocation("Maps\\Farm", "bh_t9");
-            var hopper = MakeHopper(scratch, new Vector2(5, 5), withItem: "(O)80");
-            var machine = MakeMachine(scratch, new Vector2(5, 6), "(BC)10", ready: true);
+            var hopper = MakeHopper(scratch, new Vector2(5, 5), withItem: "(O)398"); // 葡萄，小桶接受
+            var machine = MakeMachine(scratch, new Vector2(5, 6), "(BC)10", ready: true); // 小桶，已完成
 
             bool moved = HopperPatch.TryCollectFromAdjacentMachine(scratch, machine, "test");
-            // 收取后应续料：机器有料（新投入的）
+            // 收取后应续料：机器有料（新投入的葡萄）
             return moved && machine.heldObject.Value != null;
         }
 
