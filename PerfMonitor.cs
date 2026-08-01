@@ -30,6 +30,9 @@ namespace BidirectionalHopper
         /// <summary>检测长帧的阈值（毫秒）：超过即视为一次卡顿。</summary>
         private const double LagThresholdMs = 50;
 
+        /// <summary>自动落盘间隔（tick）：每 6000 tick≈100 秒写一次，任何退出方式都不丢数据。</summary>
+        private const int AutoFlushInterval = 6000;
+
         /// <summary>单轮最长的帧样本数。</summary>
         private const int MaxFrameRing = 1024;
 
@@ -87,6 +90,10 @@ namespace BidirectionalHopper
             // 运行中不做任何文件写：只在内存里累积长帧，白天结束时统一落盘。
             if (ms > LagThresholdMs)
                 PendingLag.Add((TickCount, ms));
+
+            // 定期自动落盘（100 秒一次）：直接退进程/强杀也不丢数据。
+            if (TickCount % AutoFlushInterval == 0)
+                FlushDay();
         }
 
         /// <summary>环节开始（可嵌套；同一调用内的嵌套环节在结束时按耗时比例分摊）。</summary>
