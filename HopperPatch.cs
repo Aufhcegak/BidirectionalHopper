@@ -34,20 +34,22 @@ namespace BidirectionalHopper
         /// <summary>缓存：地点 → 该地点中作为漏斗使用的箱子位置集合。</summary>
         private static readonly Dictionary<GameLocation, HashSet<Vector2>> HopperCache = new();
 
+        /// <summary>倒计时归零待收的机器（冻结期标记，主线程立即收）。</summary>
+        private static readonly List<(GameLocation Location, Object Machine)> PendingMachines = new();
+
         /// <summary>当前客户端是否是修改世界状态的权威（主机或单人游戏）。</summary>
         private static bool IsAuthority => Context.IsMainPlayer;
 
-        /// <summary>安装全部补丁。只挂低频事件（玩家交互 / 每天早晨兜底），不挂热路径。
-        /// <b>不 patch minutesElapsed 做处理</b>：那是 passTimeForObjects 冻结期热路径，
-        /// 照 Automate 的教训——任何在冻结期触发的工作都会排队到 Unlock 集中爆发卡顿。
-        /// 但挂一个<b>短路优化</b> prefix：对确定无意义的对象直接跳过函数体，
-        /// 把切换帧 2000+ 次遍历降到几十次（真正机器数），消除原版遍历开销。</summary>
+        /// <summary>安装全部补丁。只挂低频事件（玩家交互 / 每天早晨兜底），不挂热路径。</summary>
         internal static void Apply(Harmony harmony)
         {
-            // 短路优化 + 计数探针：切换帧遍历对象时，无意义的直接跳过（零状态改动）。
+            // 短路优化 + 立即收取：prefix 短路无意义对象（栅栏/装饰，跳过函数体）；
+            // postfix 对真机器倒计时归零只标记，主线程 UpdateTicked 立即收。
+            // 冻结期内只标记不写对象表，安全。
             harmony.Patch(
                 original: AccessTools.Method(typeof(Object), nameof(Object.minutesElapsed), new[] { typeof(int) }),
-                prefix: new HarmonyMethod(typeof(HopperPatch), nameof(ShortCircuitMinutesElapsed))
+                prefix: new HarmonyMethod(typeof(HopperPatch), nameof(ShortCircuitMinutesElapsed)),
+                postfix: new HarmonyMethod(typeof(HopperPatch), nameof(AfterMinutesElapsed))
             );
 
             // 玩家与机器交互后：顺手收一次产物（即时反馈，触发频率低，不在冻结期）。
@@ -63,6 +65,39 @@ namespace BidirectionalHopper
                 original: AccessTools.Method(typeof(GameLocation), nameof(GameLocation.DayUpdate), new[] { typeof(int) }),
                 postfix: new HarmonyMethod(typeof(HopperPatch), nameof(AfterDayUpdate))
             );
+        }
+
+        /// <summary>机器倒计时归零（冻结期）：只标记待收，主线程立即处理。</summary>
+        private static void AfterMinutesElapsed(Object __instance)
+        {
+            if (!IsAuthority || !Context.IsWorldReady)
+                return;
+            if (__instance is Chest)
+                return;
+            if (!__instance.readyForHarvest.Value || __instance.heldObject.Value == null || __instance.MinutesUntilReady != 0)
+                return;
+
+            GameLocation? location = __instance.Location;
+            if (location == null)
+                return;
+            PendingMachines.Add((location, __instance));
+        }
+
+        /// <summary>主线程（冻结期外）：立即收标记的机器。功能优先——同一 tick 全量处理。</summary>
+        internal static void ProcessPendingMachines()
+        {
+            if (PendingMachines.Count == 0)
+                return;
+            if (!IsAuthority || !Context.IsWorldReady)
+                return;
+
+            foreach ((GameLocation location, Object machine) in PendingMachines)
+            {
+                if (machine.Location == null)
+                    continue;
+                TryCollectFromAdjacentMachine(location, machine, "instant");
+            }
+            PendingMachines.Clear();
         }
 
         /// <summary>
