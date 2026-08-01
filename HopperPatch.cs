@@ -251,7 +251,7 @@ namespace BidirectionalHopper
         *********/
 
         /// <summary>处理与某台机器相邻（正上一格）的漏斗收取。</summary>
-        private static bool TryCollectFromAdjacentMachine(GameLocation location, Object machine, string reason)
+        internal static bool TryCollectFromAdjacentMachine(GameLocation location, Object machine, string reason)
         {
             Vector2 tile = machine.TileLocation;
             if (TryGetHopperAt(location, new Vector2(tile.X, tile.Y - 1f), out Chest? hopper))
@@ -335,7 +335,7 @@ namespace BidirectionalHopper
         /// —— 那会把每格物品的机器输出规则匹配（含 GameStateQuery 条件求值）跑两遍，是此前卡顿的主因之一。
         /// 投料成功后从 <c>lastInputItem</c> 拿实际消耗的原料用于日志。
         /// 调用方保证本机是机器（已用 <c>GetMachineData() != null</c> 把关）。</summary>
-        private static bool TryFeedMachine(GameLocation location, Chest hopper, Object machine, string reason)
+        internal static bool TryFeedMachine(GameLocation location, Chest hopper, Object machine, string reason)
         {
             PerfMonitor.Start("TryFeedMachine");
             try

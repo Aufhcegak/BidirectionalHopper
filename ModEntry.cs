@@ -38,6 +38,10 @@ namespace BidirectionalHopper
             // GMCM（可选）
             helper.Events.GameLoop.GameLaunched += OnGameLaunched;
 
+            // 自动化测试命令（照 MonsterArena.ma_selftest 模式）
+            helper.ConsoleCommands.Add("bh_selftest", "双向漏斗功能自测：覆盖收取/喂料/箱满/蜂房重启/锁跳过/非漏斗/续料等全部路径。", (_, _) => SelfTest.RunAll(this.Monitor));
+            helper.ConsoleCommands.Add("bh_perftest", "双向漏斗性能基准：50 台机器模拟时间切换帧，测轮询叠加成本。", (_, _) => SelfTest.RunPerf(this.Monitor));
+
             this.Monitor.Log(
                 $"Bidirectional Hopper 已启用：加料={(this.Config.EnableFeeding ? "开" : "关")}，收取={(this.Config.EnableCollecting ? "开" : "关")}。",
                 LogLevel.Info
