@@ -75,7 +75,7 @@ namespace BidirectionalHopper
             for (int i = 0; i < n; i++)
             {
                 var hopper = new Chest(true) { SpecialChestType = Chest.SpecialChestTypes.AutoLoader };
-                var machine = new Object(new Vector2(i * 2, 5), "(BC)10");
+                var machine = (Object)ItemRegistry.Create("(BC)12"); // 小桶
                 scratch.objects[new Vector2(i * 2, 4)] = hopper;
                 scratch.objects[new Vector2(i * 2, 5)] = machine;
                 HopperPatch.OnObjectAdded(scratch, new Vector2(i * 2, 4), hopper);
@@ -152,7 +152,7 @@ namespace BidirectionalHopper
         {
             var scratch = new GameLocation("Maps\\Farm", "bh_t3");
             var hopper = MakeHopper(scratch, new Vector2(5, 5), withItem: "(O)398"); // 葡萄，小桶接受
-            var machine = MakeMachine(scratch, new Vector2(5, 6), "(BC)10", ready: false); // 小桶
+            var machine = MakeMachine(scratch, new Vector2(5, 6), "(BC)12", ready: false); // 小桶
 
             bool fed = HopperPatch.TryFeedMachine(scratch, hopper, machine, "test");
             return fed && machine.heldObject.Value != null;
@@ -162,7 +162,7 @@ namespace BidirectionalHopper
         {
             var scratch = new GameLocation("Maps\\Farm", "bh_t4");
             var hopper = MakeHopper(scratch, new Vector2(5, 5), withItem: "(O)398");
-            var machine = MakeMachine(scratch, new Vector2(5, 6), "(BC)10", ready: false);
+            var machine = MakeMachine(scratch, new Vector2(5, 6), "(BC)12", ready: false);
             machine.heldObject.Value = new Object("(O)398", 1); // 已有料
 
             bool fed = HopperPatch.TryFeedMachine(scratch, hopper, machine, "test");
@@ -224,7 +224,7 @@ namespace BidirectionalHopper
         {
             var scratch = new GameLocation("Maps\\Farm", "bh_t9");
             var hopper = MakeHopper(scratch, new Vector2(5, 5), withItem: "(O)398"); // 葡萄，小桶接受
-            var machine = MakeMachine(scratch, new Vector2(5, 6), "(BC)10", ready: true); // 小桶，已完成
+            var machine = MakeMachine(scratch, new Vector2(5, 6), "(BC)12", ready: true); // 小桶，已完成
 
             bool moved = HopperPatch.TryCollectFromAdjacentMachine(scratch, machine, "test");
             // 收取后应续料：机器有料（新投入的葡萄）
@@ -248,13 +248,15 @@ namespace BidirectionalHopper
 
         private static Object MakeMachine(GameLocation loc, Vector2 tile, string itemId, bool ready)
         {
-            var machine = new Object(tile, itemId);
+            // 用 ItemRegistry.Create 构造（带真实数据），不能 new Object(tile, "(BC)x")——
+            // 那样会把带括号的 ID 传给 bigCraftableData 查找，得到 Error Item（GetMachineData 为空）。
+            var machine = (Object)ItemRegistry.Create(itemId);
             machine.TileLocation = tile;
             loc.objects[tile] = machine;
             if (ready)
             {
                 machine.readyForHarvest.Value = true;
-                machine.heldObject.Value = new Object("(O)348", 1); // 腌菜
+                machine.heldObject.Value = new Object("(O)348", 1); // 果酒
                 machine.MinutesUntilReady = 0;
             }
             return machine;

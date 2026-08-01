@@ -56,6 +56,13 @@ namespace BidirectionalHopper
         /// <summary>最近长帧的 tick 号与帧耗时（运行中只累积，落盘由 FlushDay 统一做）。</summary>
         private static readonly List<(int Tick, double Ms)> PendingLag = new();
 
+        /// <summary>时间切换帧（每 10 分钟）：游戏时间变化那一帧的耗时（timeOfDay, ms）。
+        /// 卡顿是否在切换帧，看这个序列的耗时分布即可——正常应 ≈ 普通帧。</summary>
+        private static readonly List<(int TimeOfDay, double Ms)> TimeSwitchFrames = new();
+
+        /// <summary>上一次看到的游戏时间（检测切换帧用）。</summary>
+        private static int LastTimeOfDay = -1;
+
         /// <summary>由 ModEntry 在 UpdateTicked 每帧调用。</summary>
         internal static void OnTick()
         {
@@ -69,6 +76,13 @@ namespace BidirectionalHopper
             // 环形缓冲：记录最近一帧的耗时（500ms 上限，防异常值污染）。
             FrameRing[FrameRingPos] = (float)Math.Min(ms, 500.0);
             FrameRingPos = (FrameRingPos + 1) % MaxFrameRing;
+
+            // 时间切换帧：游戏时间变化的那一帧（原版 passTimeForObjects 批量推进机器，
+            // 是卡顿高发帧）。单独记录其耗时，落盘后直接看出切换帧还卡不卡。
+            int timeOfDay = Game1.timeOfDay;
+            if (LastTimeOfDay != -1 && timeOfDay != LastTimeOfDay)
+                TimeSwitchFrames.Add((timeOfDay, ms));
+            LastTimeOfDay = timeOfDay;
 
             // 运行中不做任何文件写：只在内存里累积长帧，白天结束时统一落盘。
             if (ms > LagThresholdMs)
@@ -112,6 +126,11 @@ namespace BidirectionalHopper
 
             try
             {
+                // 时间切换帧（每 10 分钟）：专门记录其耗时，验证卡顿是否在切换帧。
+                foreach ((int timeOfDay, double ms) in TimeSwitchFrames)
+                    FlushLine("switch", $"{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{timeOfDay},{ms:F1}");
+                TimeSwitchFrames.Clear();
+
                 // 长帧列表（运行期只在内存累积，这里才写文件，避免热路径写冲突卡死）。
                 foreach ((int tick, double ms) in PendingLag)
                     FlushLine("lag", $"{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{tick},{ms:F1}");
