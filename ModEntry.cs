@@ -74,6 +74,7 @@ namespace BidirectionalHopper
 
         private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
         {
+            PerfMonitor.FlushDay(); // 下号也落盘：光测 bug 不睡觉时数据不会丢
             HopperPatch.RebuildCache(); // 清空缓存
         }
 

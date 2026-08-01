@@ -65,6 +65,9 @@ namespace BidirectionalHopper
         /// <summary>每轮最多处理的漏斗数（把开销封顶在常数，多台分摊到多帧，不叠加成尖峰）。</summary>
         private const int BatchSize = 4;
 
+        /// <summary>上一次看到的游戏时间（用于检测 10 分钟切换帧）。</summary>
+        private static int LastTimeOfDay = -1;
+
         /// <summary>主线程节流轮询：把当前地图缓存的漏斗统一收产物 + 投原料。
         /// 照 Automate.MachineGroup.Automate：先查锁跳过整组，再分 Done(收) / Empty(喂) 处理。</summary>
         internal static void ProcessAllHoppers()
@@ -75,6 +78,16 @@ namespace BidirectionalHopper
             ModConfig config = ModEntry.Instance.Config;
             if (!config.EnableFeeding && !config.EnableCollecting)
                 return;
+
+            // 时间切换帧（每 10 分钟）：原版 passTimeForObjects 正在批量推进所有机器倒计时，
+            // 这帧本身就很重。跳过本轮，把漏斗收/投挪到下一帧，避免两件重活叠加成卡顿尖峰。
+            int timeOfDay = Game1.timeOfDay;
+            if (LastTimeOfDay != -1 && timeOfDay != LastTimeOfDay)
+            {
+                LastTimeOfDay = timeOfDay;
+                return;
+            }
+            LastTimeOfDay = timeOfDay;
 
             GameLocation? location = Game1.currentLocation;
             if (location == null || !HopperCache.TryGetValue(location, out HashSet<Vector2>? hoppers) || hoppers.Count == 0)

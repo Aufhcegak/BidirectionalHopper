@@ -4,5 +4,5 @@
   "IncludePlainChestsAboveHoppers": false,
   "FeedDownIntervalMinutes": 0,
   "AutomationInterval": 60,
-  "VerboseLogging": false
+  "VerboseLogging": true
 }
