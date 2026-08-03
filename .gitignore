@@ -1,2 +1,17 @@
+# 构建产物
 bin/
 obj/
+*.dll
+*.pdb
+*.deps.json
+*.runtimeconfig.json
+
+# 性能采样数据（诊断期产物）
+perfmon-*.csv
+
+# 测试触发文件
+autotest.txt
+
+# IDE
+.vs/
+*.user
