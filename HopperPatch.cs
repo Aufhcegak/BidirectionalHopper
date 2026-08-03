@@ -37,6 +37,30 @@ namespace BidirectionalHopper
         /// <summary>倒计时归零待收的机器（冻结期标记，主线程立即收）。</summary>
         private static readonly List<(GameLocation Location, Object Machine)> PendingMachines = new();
 
+        /// <summary>同帧互斥:防 ProcessPendingMachines(时间切换帧)与 AfterCheckForAction(玩家点击)
+        /// 同一 tick 先后触发两次收取同一台机器(读同一 heldObject → 双放物品 = 重复收取)。
+        /// 按机器引用登记,收取完成清除;同帧第二次尝试直接跳过。</summary>
+        private static readonly HashSet<Object> CollectingThisTick = new();
+
+        /// <summary>尝试登记收取(互斥)。成功返回 true(本次可收),失败表示本帧已在收/刚收过。</summary>
+        private static bool TryBeginCollect(Object machine)
+        {
+            if (machine == null || CollectingThisTick.Contains(machine))
+                return false;
+            CollectingThisTick.Add(machine);
+            return true;
+        }
+
+        /// <summary>收取完成(无论成功失败)释放互斥。每帧末尾全清(防残留)。</summary>
+        private static void EndCollect(Object machine)
+        {
+            if (machine != null)
+                CollectingThisTick.Remove(machine);
+        }
+
+        /// <summary>每帧末尾清除互斥登记(收集逻辑分散在多个入口,统一由 ModEntry 每 tick 清一次)。</summary>
+        internal static void ClearCollectingThisTick() => CollectingThisTick.Clear();
+
         /// <summary>当前客户端是否是修改世界状态的权威（主机或单人游戏）。</summary>
         private static bool IsAuthority => Context.IsMainPlayer;
 
@@ -67,7 +91,9 @@ namespace BidirectionalHopper
             );
         }
 
-        /// <summary>机器倒计时归零（冻结期）：只标记待收，主线程立即处理。</summary>
+        /// <summary>机器倒计时归零（冻结期）：只标记待收，主线程立即处理。
+        /// 只标记"有上方漏斗"的机器——机器完成但上方没有漏斗时标记是纯浪费
+        /// （主线程也会跳过），还会把 PendingMachines 撑大。</summary>
         private static void AfterMinutesElapsed(Object __instance)
         {
             if (!IsAuthority || !Context.IsWorldReady)
@@ -80,10 +106,15 @@ namespace BidirectionalHopper
             GameLocation? location = __instance.Location;
             if (location == null)
                 return;
+            // 只登记上方有漏斗的机器（TryGetHopperAt 走缓存，O(1)）
+            if (!TryGetHopperAt(location, new Vector2(__instance.TileLocation.X, __instance.TileLocation.Y - 1f), out _))
+                return;
             PendingMachines.Add((location, __instance));
         }
 
-        /// <summary>主线程（冻结期外）：立即收标记的机器。功能优先——同一 tick 全量处理。</summary>
+        /// <summary>主线程（冻结期外）：立即收标记的机器。功能优先——同一 tick 全量处理。
+        /// 收之前重新校验机器状态：标记后机器可能被玩家右键收走/被换掉，
+        /// 旧引用直接跳过（防重复收取脏标记）。</summary>
         internal static void ProcessPendingMachines()
         {
             if (PendingMachines.Count == 0)
@@ -95,7 +126,20 @@ namespace BidirectionalHopper
             {
                 if (machine.Location == null)
                     continue;
-                TryCollectFromAdjacentMachine(location, machine, "instant");
+                // 状态校验：仍是同一台已完成机器（防玩家中途右键收走/替换后的脏标记）
+                if (!machine.readyForHarvest.Value || machine.heldObject.Value == null || machine.MinutesUntilReady != 0)
+                    continue;
+                // 同帧互斥:玩家点击(AfterCheckForAction)已在本帧收过 → 跳过,防双收
+                if (!TryBeginCollect(machine))
+                    continue;
+                try
+                {
+                    TryCollectFromAdjacentMachine(location, machine, "instant");
+                }
+                finally
+                {
+                    EndCollect(machine);
+                }
             }
             PendingMachines.Clear();
         }
@@ -248,7 +292,12 @@ namespace BidirectionalHopper
         /// <summary>玩家与机器交互后：尝试收一次产物（即时反馈）。
         /// <b>必须拦截 justCheckingForActivity=true 的调用</b>：原版每帧都调
         /// <c>Game1.updateCursorTileHint() → isActionableTile → isActionable → checkForAction(probe)</c>
-        /// 来判断光标下物体是否可交互；若不拦截，鼠标悬停在已完成机器上会每帧跑一次完整收取逻辑（规则匹配 + 物品分配）。</summary>
+        /// 来判断光标下物体是否可交互；若不拦截，鼠标悬停在已完成机器上会每帧跑一次完整收取逻辑（规则匹配 + 物品分配）。
+        ///
+        /// 防重复：只在实际有上方漏斗时收取（TryGetHopperAt O(1)），且只处理
+        /// "现在 ready 的机器"——玩家右键刚收过、漏斗满导致机器保持 ready 的
+        /// 场景，这里再次全量收也收不进（CollectThenRefill 内已有箱满判断），
+        /// 无重复物品，但避免无意义的规则匹配重跑。</summary>
         private static void AfterCheckForAction(bool justCheckingForActivity, Object __instance, bool __result)
         {
             if (justCheckingForActivity || !IsAuthority || !__result)
@@ -261,7 +310,20 @@ namespace BidirectionalHopper
             {
                 GameLocation? location = __instance.Location;
                 if (location != null)
-                    TryCollectFromAdjacentMachine(location, __instance, "checkForAction");
+                {
+                    // 同帧互斥:ProcessPendingMachines(时间切换帧)已收过 → 跳过,防双收
+                    if (TryBeginCollect(__instance))
+                    {
+                        try
+                        {
+                            TryCollectFromAdjacentMachine(location, __instance, "checkForAction");
+                        }
+                        finally
+                        {
+                            EndCollect(__instance);
+                        }
+                    }
+                }
             }
             finally
             {
@@ -371,7 +433,7 @@ namespace BidirectionalHopper
             }
             else
             {
-                held.Stack = leftover.Stack;
+                held.Stack = leftover!.Stack;
                 machine.heldObject.Value = held;
             }
             OnTransferred(location, machine.TileLocation, held, hopper, $"collect/{reason}");
