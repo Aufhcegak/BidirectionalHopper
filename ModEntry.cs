@@ -13,6 +13,9 @@ namespace BidirectionalHopper
         internal static ModEntry Instance { get; private set; } = null!;
         internal ModConfig Config { get; private set; } = null!;
 
+        /// <summary>自动测试钩子:autotest.txt 存在时,标题画面自动跑 bh_selftest(不加载存档)。</summary>
+        private bool autotestPending;
+
         public override void Entry(IModHelper helper)
         {
             Instance = this;
@@ -42,6 +45,10 @@ namespace BidirectionalHopper
             helper.ConsoleCommands.Add("bh_selftest", "双向漏斗功能自测：覆盖收取/喂料/箱满/蜂房重启/锁跳过/非漏斗/续料等全部路径。", (_, _) => SelfTest.RunAll(this.Monitor));
             helper.ConsoleCommands.Add("bh_perftest", "双向漏斗性能基准：50 台机器模拟时间切换帧，测轮询叠加成本。", (_, _) => SelfTest.RunPerf(this.Monitor));
 
+            // automated test hook: if autotest.txt sits next to the DLL, run the self-test
+            // automatically at the title screen (no save needed) — used for headless runs
+            this.autotestPending = System.IO.File.Exists(System.IO.Path.Combine(helper.DirectoryPath, "autotest.txt"));
+
             this.Monitor.Log(
                 $"Bidirectional Hopper 已启用：加料={(this.Config.EnableFeeding ? "开" : "关")}，收取={(this.Config.EnableCollecting ? "开" : "关")}。",
                 LogLevel.Info
@@ -56,9 +63,20 @@ namespace BidirectionalHopper
         /// <summary>每帧喂给采样器，由它判断是否需要检查长帧。</summary>
         private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
         {
+            // 自动测试钩子(照 MonsterArena ma_selftest 模式):
+            // 标题画面直接跑自测——不加载任何存档,自测用独立临时地点,测完丢弃。
+            if (this.autotestPending && Context.IsGameLaunched && !Context.IsWorldReady)
+            {
+                this.autotestPending = false;
+                SelfTest.RunAll(this.Monitor);
+                SelfTest.RunPerf(this.Monitor);
+            }
+
             PerfMonitor.OnTick();
             // 冻结期标记的机器：主线程立即收（同一 tick）
             HopperPatch.ProcessPendingMachines();
+            // 每帧末清互斥登记(防残留:下帧允许重新收)
+            HopperPatch.ClearCollectingThisTick();
             // 兜底轮询（错过事件时）
             if (!e.IsMultipleOf((uint)this.Config.AutomationInterval))
                 return;
