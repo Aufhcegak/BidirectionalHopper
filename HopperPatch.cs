@@ -67,7 +67,9 @@ namespace BidirectionalHopper
             );
         }
 
-        /// <summary>机器倒计时归零（冻结期）：只标记待收，主线程立即处理。</summary>
+        /// <summary>机器倒计时归零（冻结期）：只标记待收，主线程立即处理。
+        /// 只标记"有上方漏斗"的机器——机器完成但上方没有漏斗时标记是纯浪费
+        /// （主线程也会跳过），还会把 PendingMachines 撑大。</summary>
         private static void AfterMinutesElapsed(Object __instance)
         {
             if (!IsAuthority || !Context.IsWorldReady)
@@ -80,10 +82,15 @@ namespace BidirectionalHopper
             GameLocation? location = __instance.Location;
             if (location == null)
                 return;
+            // 只登记上方有漏斗的机器（TryGetHopperAt 走缓存，O(1)）
+            if (!TryGetHopperAt(location, new Vector2(__instance.TileLocation.X, __instance.TileLocation.Y - 1f), out _))
+                return;
             PendingMachines.Add((location, __instance));
         }
 
-        /// <summary>主线程（冻结期外）：立即收标记的机器。功能优先——同一 tick 全量处理。</summary>
+        /// <summary>主线程（冻结期外）：立即收标记的机器。功能优先——同一 tick 全量处理。
+        /// 收之前重新校验机器状态：标记后机器可能被玩家右键收走/被换掉，
+        /// 旧引用直接跳过（防重复收取脏标记）。</summary>
         internal static void ProcessPendingMachines()
         {
             if (PendingMachines.Count == 0)
@@ -94,6 +101,9 @@ namespace BidirectionalHopper
             foreach ((GameLocation location, Object machine) in PendingMachines)
             {
                 if (machine.Location == null)
+                    continue;
+                // 状态校验：仍是同一台已完成机器（防玩家中途右键收走/替换后的脏标记）
+                if (!machine.readyForHarvest.Value || machine.heldObject.Value == null || machine.MinutesUntilReady != 0)
                     continue;
                 TryCollectFromAdjacentMachine(location, machine, "instant");
             }
@@ -248,7 +258,12 @@ namespace BidirectionalHopper
         /// <summary>玩家与机器交互后：尝试收一次产物（即时反馈）。
         /// <b>必须拦截 justCheckingForActivity=true 的调用</b>：原版每帧都调
         /// <c>Game1.updateCursorTileHint() → isActionableTile → isActionable → checkForAction(probe)</c>
-        /// 来判断光标下物体是否可交互；若不拦截，鼠标悬停在已完成机器上会每帧跑一次完整收取逻辑（规则匹配 + 物品分配）。</summary>
+        /// 来判断光标下物体是否可交互；若不拦截，鼠标悬停在已完成机器上会每帧跑一次完整收取逻辑（规则匹配 + 物品分配）。
+        ///
+        /// 防重复：只在实际有上方漏斗时收取（TryGetHopperAt O(1)），且只处理
+        /// "现在 ready 的机器"——玩家右键刚收过、漏斗满导致机器保持 ready 的
+        /// 场景，这里再次全量收也收不进（CollectThenRefill 内已有箱满判断），
+        /// 无重复物品，但避免无意义的规则匹配重跑。</summary>
         private static void AfterCheckForAction(bool justCheckingForActivity, Object __instance, bool __result)
         {
             if (justCheckingForActivity || !IsAuthority || !__result)
@@ -371,7 +386,7 @@ namespace BidirectionalHopper
             }
             else
             {
-                held.Stack = leftover.Stack;
+                held.Stack = leftover!.Stack;
                 machine.heldObject.Value = held;
             }
             OnTransferred(location, machine.TileLocation, held, hopper, $"collect/{reason}");

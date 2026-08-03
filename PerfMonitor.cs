@@ -162,18 +162,24 @@ namespace BidirectionalHopper
             try
             {
                 // 时间切换帧（每 10 分钟）：专门记录其耗时，验证卡顿是否在切换帧。
+                // Game1.Date/Game1.player 在极端环境（无头测试/标题画面早期）可能抛异常
+                // 或为 null——必须兜底，否则一行都写不出去、统计也清不掉（数据全丢）。
+                string date = "?", player = "?";
+                try { date = Game1.Date?.ToString() ?? "?"; } catch { }
+                try { player = Game1.player?.Name ?? "?"; } catch { }
+
                 foreach ((int timeOfDay, double ms) in TimeSwitchFrames)
-                    FlushLine("switch", $"{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{timeOfDay},{ms:F1}");
+                    FlushLine("switch", $"{player},{date},{timeOfDay},{ms:F1}");
                 TimeSwitchFrames.Clear();
 
                 // 切换帧内部统计：minutesElapsed 调用次数（地图对象量）与耗时。
                 foreach ((int timeOfDay, int calls, double ms) in SwitchFrameStats)
-                    FlushLine("switchdetail", $"{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{timeOfDay},{calls},{ms:F1}");
+                    FlushLine("switchdetail", $"{player},{date},{timeOfDay},{calls},{ms:F1}");
                 SwitchFrameStats.Clear();
 
                 // 长帧列表（运行期只在内存累积，这里才写文件，避免热路径写冲突卡死）。
                 foreach ((int tick, double ms) in PendingLag)
-                    FlushLine("lag", $"{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{tick},{ms:F1}");
+                    FlushLine("lag", $"{player},{date},{tick},{ms:F1}");
                 PendingLag.Clear();
 
                 // 实时帧耗时窗口（最近 MaxFrameRing 帧）。
@@ -186,7 +192,7 @@ namespace BidirectionalHopper
                     int idx = (start + i) % MaxFrameRing;
                     if (FrameRing[idx] > 0)
                         FlushLine("frame",
-                            $"{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{TickCount - n + i},{FrameRing[idx]:F1}");
+                            $"{player},{date},{TickCount - n + i},{FrameRing[idx]:F1}");
                 }
 
                 // 环节统计。
@@ -195,7 +201,7 @@ namespace BidirectionalHopper
                     int calls = Counts.GetValueOrDefault(kv.Key);
                     double avg = calls > 0 ? kv.Value / calls : 0;
                     FlushLine("timing",
-                        $"{Game1.player?.Name ?? "?"},{Game1.Date?.ToString() ?? "?"},{kv.Key},{calls},{kv.Value:F2},{avg:F3},{Maxes.GetValueOrDefault(kv.Key):F2}");
+                        $"{player},{date},{kv.Key},{calls},{kv.Value:F2},{avg:F3},{Maxes.GetValueOrDefault(kv.Key):F2}");
                 }
 
                 Timings.Clear();

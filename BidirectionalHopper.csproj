@@ -24,6 +24,13 @@
   </Target>
 
   <ItemGroup>
+    <!-- 嵌套 logic_test 子工程:必须从主工程的默认 **/*.cs glob 排除,
+         否则子工程源码/obj 编进主工程 → ModEntry 双重定义 + AssemblyInfo 特性重复 -->
+    <Compile Remove="logic_test/**" />
+    <None Remove="logic_test/**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Pathoschild.Stardew.ModBuildConfig：
          自动引用 Stardew Valley / SMAPI / xTile，
          编译后将程序集与 manifest.json 等自动部署到游戏 Mods 目录（默认 <GamePath>\Mods\<AssemblyName>）。 -->

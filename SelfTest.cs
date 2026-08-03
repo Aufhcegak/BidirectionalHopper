@@ -184,16 +184,22 @@ namespace BidirectionalHopper
 
         private static bool TestHiveRestart()
         {
-            // 蜂房 (BC)10 是收集类机器，收取后无 OutputCollected 续产规则，
-            // 所以预期"收取后机器为空（不续产）"——验证收取复位正确。
+            // 蜂房 (BC)10 在 1.6 有 OutputCollected 续产规则：收取后立即开始新一轮产蜜
+            // （原版 CheckForActionOnMachine 收取后同样走 OutputCollected 续产，Automate 也保留这步）。
+            // 所以正确预期是：收取成功 + 机器进入新一轮产蜜状态
+            // （heldObject 非空 = 新一轮产物, readyForHarvest 变 false = 计时重新开始）。
             var scratch = new GameLocation("Maps\\Farm", "bh_t6");
             var hopper = MakeHopper(scratch, new Vector2(5, 5));
             var hive = MakeMachine(scratch, new Vector2(5, 6), "(BC)10", ready: true);
             hive.heldObject.Value = new Object("(O)340", 1); // 蜂蜜
 
             bool moved = HopperPatch.TryCollectFromAdjacentMachine(scratch, hive, "test");
-            // 收取成功 + 机器复位（无续产规则时不自动重启）
-            return moved && hive.heldObject.Value == null && !hive.readyForHarvest.Value;
+            bool inHopper = hopper.Items.Any(i => i != null && i.QualifiedItemId == "(O)340");
+            bool restarted = hive.heldObject.Value != null && !hive.readyForHarvest.Value;
+            if (!(moved && inHopper && restarted))
+                Console.WriteLine($"[bh_selftest] TestHiveRestart 诊断: moved={moved} inHopper={inHopper} held={hive.heldObject.Value?.QualifiedItemId ?? "null"} ready={hive.readyForHarvest.Value}");
+            // 收取成功 + 产物进漏斗 + 机器续产（heldObject 重新非空, ready 变 false）
+            return moved && inHopper && restarted;
         }
 
         private static bool TestLockedHopperSkipped()

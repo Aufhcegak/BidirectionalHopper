@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>logic_test</AssemblyName>
+    <RootNamespace>logic_test</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- 链接主工程源码:PerfMonitor(计时/环/切换帧) 与 ModConfig 是纯逻辑,可无头测。
+         PerfMonitor 引用的 ModEntry 由 Program.cs 里的 stub 提供(测试不链接 ModEntry.cs,
+         避免拖入 HopperPatch/SelfTest/Harmony 依赖链)。
+         HopperPatch 依赖 Chest/GameLocation(无头构造 NRE),留给无头 SMAPI 集成测试。 -->
+    <Compile Include="..\PerfMonitor.cs" />
+    <Compile Include="..\ModConfig.cs" />
+    <Reference Include="StardewValley"><HintPath>..\..\..\Stardew Valley.dll</HintPath></Reference>
+    <Reference Include="StardewModdingAPI"><HintPath>..\..\..\StardewModdingAPI.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>
