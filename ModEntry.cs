@@ -75,6 +75,8 @@ namespace BidirectionalHopper
             PerfMonitor.OnTick();
             // 冻结期标记的机器：主线程立即收（同一 tick）
             HopperPatch.ProcessPendingMachines();
+            // 每帧末清互斥登记(防残留:下帧允许重新收)
+            HopperPatch.ClearCollectingThisTick();
             // 兜底轮询（错过事件时）
             if (!e.IsMultipleOf((uint)this.Config.AutomationInterval))
                 return;

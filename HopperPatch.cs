@@ -37,6 +37,30 @@ namespace BidirectionalHopper
         /// <summary>倒计时归零待收的机器（冻结期标记，主线程立即收）。</summary>
         private static readonly List<(GameLocation Location, Object Machine)> PendingMachines = new();
 
+        /// <summary>同帧互斥:防 ProcessPendingMachines(时间切换帧)与 AfterCheckForAction(玩家点击)
+        /// 同一 tick 先后触发两次收取同一台机器(读同一 heldObject → 双放物品 = 重复收取)。
+        /// 按机器引用登记,收取完成清除;同帧第二次尝试直接跳过。</summary>
+        private static readonly HashSet<Object> CollectingThisTick = new();
+
+        /// <summary>尝试登记收取(互斥)。成功返回 true(本次可收),失败表示本帧已在收/刚收过。</summary>
+        private static bool TryBeginCollect(Object machine)
+        {
+            if (machine == null || CollectingThisTick.Contains(machine))
+                return false;
+            CollectingThisTick.Add(machine);
+            return true;
+        }
+
+        /// <summary>收取完成(无论成功失败)释放互斥。每帧末尾全清(防残留)。</summary>
+        private static void EndCollect(Object machine)
+        {
+            if (machine != null)
+                CollectingThisTick.Remove(machine);
+        }
+
+        /// <summary>每帧末尾清除互斥登记(收集逻辑分散在多个入口,统一由 ModEntry 每 tick 清一次)。</summary>
+        internal static void ClearCollectingThisTick() => CollectingThisTick.Clear();
+
         /// <summary>当前客户端是否是修改世界状态的权威（主机或单人游戏）。</summary>
         private static bool IsAuthority => Context.IsMainPlayer;
 
@@ -105,7 +129,17 @@ namespace BidirectionalHopper
                 // 状态校验：仍是同一台已完成机器（防玩家中途右键收走/替换后的脏标记）
                 if (!machine.readyForHarvest.Value || machine.heldObject.Value == null || machine.MinutesUntilReady != 0)
                     continue;
-                TryCollectFromAdjacentMachine(location, machine, "instant");
+                // 同帧互斥:玩家点击(AfterCheckForAction)已在本帧收过 → 跳过,防双收
+                if (!TryBeginCollect(machine))
+                    continue;
+                try
+                {
+                    TryCollectFromAdjacentMachine(location, machine, "instant");
+                }
+                finally
+                {
+                    EndCollect(machine);
+                }
             }
             PendingMachines.Clear();
         }
@@ -276,7 +310,20 @@ namespace BidirectionalHopper
             {
                 GameLocation? location = __instance.Location;
                 if (location != null)
-                    TryCollectFromAdjacentMachine(location, __instance, "checkForAction");
+                {
+                    // 同帧互斥:ProcessPendingMachines(时间切换帧)已收过 → 跳过,防双收
+                    if (TryBeginCollect(__instance))
+                    {
+                        try
+                        {
+                            TryCollectFromAdjacentMachine(location, __instance, "checkForAction");
+                        }
+                        finally
+                        {
+                            EndCollect(__instance);
+                        }
+                    }
+                }
             }
             finally
             {
