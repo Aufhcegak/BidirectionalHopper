@@ -1,17 +1,24 @@
-# 构建产物
+# 统一忽略规则(所有 mod 通用)
+# 构建产物(成品入库前必须清理,测试结束后删除)
 bin/
 obj/
+logic_test/bin/
+logic_test/obj/
 *.dll
 *.pdb
 *.deps.json
 *.runtimeconfig.json
 
-# 性能采样数据（诊断期产物）
+# 测试触发/输出文件
+autotest.txt
+autotest_result.txt
+
+# 性能采样数据
 perfmon-*.csv
 
-# 测试触发文件
-autotest.txt
-
-# IDE
+# IDE/系统文件
 .vs/
 *.user
+.idea/
+Thumbs.db
+Desktop.ini
